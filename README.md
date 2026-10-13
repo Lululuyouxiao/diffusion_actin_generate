@@ -1,19 +1,55 @@
 # Actin-stress-fibers-generator
-## A Graphic card with at least 8GB VRAM is recommended.
+## Based on 4090 
 ## Environment:
-      with Python 3.9 and CUDA 11.7:
-            pytorch 1.11.0,
-            torchvision 0.12.0,
-## unzip 'validation/example/example.7z' could acquire validation data.
-    Please unzip the items to the folder 'validation/example/'
+      Package                  Version
+      ------------------------ ------------
+      contourpy                1.3.0
+      cycler                   0.12.1
+      einops                   0.8.2
+      filelock                 3.19.1
+      fonttools                4.60.2
+      fsspec                   2025.10.0
+      ImageIO                  2.37.2
+      importlib_resources      6.5.2
+      Jinja2                   3.1.6
+      kiwisolver               1.4.7
+      lazy-loader              0.6
+      MarkupSafe               3.0.2
+      matplotlib               3.9.4
+      mpmath                   1.3.0
+      networkx                 3.2.1
+      numpy                    1.26.4
+      nvidia-cublas-cu12       12.1.3.1
+      nvidia-cuda-cupti-cu12   12.1.105
+      nvidia-cuda-nvrtc-cu12   12.1.105
+      nvidia-cuda-runtime-cu12 12.1.105
+      nvidia-cudnn-cu12        8.9.2.26
+      nvidia-cufft-cu12        11.0.2.54
+      nvidia-curand-cu12       10.3.2.106
+      nvidia-cusolver-cu12     11.4.5.107
+      nvidia-cusparse-cu12     12.1.0.106
+      nvidia-nccl-cu12         2.20.5
+      nvidia-nvjitlink-cu12    12.9.86
+      nvidia-nvtx-cu12         12.1.105
+      opencv-python-headless   4.11.0.86
+      packaging                26.3
+      pillow                   11.3.0
+      pip                      26.0.1
+      pyparsing                3.3.3
+      python-dateutil          2.9.0.post0
+      scikit-image             0.24.0
+      scipy                    1.13.1
+      setuptools               80.9.0
+      six                      1.17.0
+      sympy                    1.14.0
+      tifffile                 2024.8.30
+      torch                    2.3.1+cu121
+      torchvision              0.18.1+cu121
+      tqdm                     4.70.1
+      triton                   2.3.1
+      typing_extensions        4.16.0
+      wheel                    0.45.1
+      zipp                     3.23.1
     
-## unzip 'model/generator.7z.001~generator.7z.022' could acquire pre-trained weight for the network.
-    Please unzip the items to the folder 'model/'
- 
-## Usage:
-    run 'run_SFs_generator.py'
-    change average_num to 1 if you do not need the average distribution of stress fibers
-    allowing for modify your ownn colormap in visualizing stress fibers
-    
-## Dataset for training
-    Unzip file 'dataset.7z'
+## Acknowledgement
+    This project is built upon [Actin-stress-fibers-generator](https://github.com/Minatsukiyoshino/Actin-stress-fibers-generator), which accompanies the paper *"Diffusion model predicts the geometry of actin cytoskeleton from cell morphology"*.
