@@ -1,0 +1,21 @@
+# 大数据目录
+dataset/
+model/
+validation/
+*.7z*
+
+# 模型权重和推理产物
+*.pt
+*.pkl
+results*/
+
+# 日志和缓存
+__pycache__/
+*.pyc
+eval_logs/
+*.log
+
+# 视频等大附件
+S1 video/
+S2 video/
+S3 video/

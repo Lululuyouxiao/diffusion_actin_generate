@@ -1,0 +1,82 @@
+[
+  {
+    "name": "paper_baseline",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.00015,
+    "timesteps": 800,
+    "ddim_steps": 80,
+    "loss_type": "mse",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "lr_low",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.000075,
+    "timesteps": 800,
+    "ddim_steps": 80,
+    "loss_type": "mse",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "lr_high",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.0003,
+    "timesteps": 800,
+    "ddim_steps": 80,
+    "loss_type": "mse",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "timesteps_400",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.00015,
+    "timesteps": 400,
+    "ddim_steps": 40,
+    "loss_type": "mse",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "timesteps_1200",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.00015,
+    "timesteps": 1200,
+    "ddim_steps": 120,
+    "loss_type": "mse",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "batch_8",
+    "epochs": 1500,
+    "batch_size": 8,
+    "lr": 0.00015,
+    "timesteps": 800,
+    "ddim_steps": 80,
+    "loss_type": "mse",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "huber_loss",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.00015,
+    "timesteps": 800,
+    "ddim_steps": 80,
+    "loss_type": "huber",
+    "augmentation_prob": 1.0
+  },
+  {
+    "name": "no_augmentation",
+    "epochs": 1500,
+    "batch_size": 16,
+    "lr": 0.00015,
+    "timesteps": 800,
+    "ddim_steps": 80,
+    "loss_type": "mse",
+    "augmentation_prob": 0.0
+  }
+]

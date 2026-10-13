@@ -1,0 +1,64 @@
+主要新增：
+
+  - train_diffusion.py：完整训练入口
+  - diffusion_core.py：cosine schedule、前向加噪、DDPM/DDIM
+  - datasets.py：严格文件名配对、resize、[-1,1] 归一化、同步增强
+  - training_config.py：规范 CLI 配置和参数校验
+  - evaluate_diffusion.py：每个条件生成 100 个样本并输出概率图
+  - configs/experiment_matrix.json：8 组实验配置
+  - scripts/run_batch_train.sh：Linux 服务器批量训练
+  - scripts/run_batch_train.ps1：Windows 批量训练
+  - docs/TRAINING.md：完整使用说明
+  - tests/：9 个单元和 smoke 测试
+
+  文献基线已对齐：
+
+  - 256×256 灰度图
+  - T=800
+  - cosine noise schedule
+  - DDIM S=80
+  - Adam，学习率 1.5e-4
+  - batch size 16
+  - 1500 epochs
+  - 旋转和水平/垂直翻转增强
+  - 噪声预测 MSE loss
+  - 每个输入生成 100 个样本，计算平均概率图
+
+  服务器一键批量训练：
+
+  conda activate TFM
+  输出目录：
+
+    lr_high/
+    timesteps_400/
+    timesteps_1200/
+    batch_8/
+    huber_loss/
+    no_augmentation/
+
+  单次训练：
+
+  python train_diffusion.py \
+    --dataset_root /path/to/dataset \
+    --output_dir runs/paper_baseline \
+    --device cuda
+
+  验证结果：
+
+  - 单元测试：9/9 PASS
+  - Python 静态编译：通过
+  - 实验矩阵解析：通过
+  - PowerShell 批量脚本语法：通过
+  - 未解压或读取任何 .7z 文件
+
+  最值得调整的超参数：
+
+  1. 学习率：7.5e-5 / 1.5e-4 / 3e-4
+  2. batch size：8 / 16
+  3. 扩散步数：T=400 / 800 / 1200
+  4. DDIM 步数：对应 40 / 80 / 120
+  5. 数据增强：开启与关闭
+  6. loss：MSE 与 Huber
+  7. U-Net 宽度：最后再调整，显存开销较大
+
+  需要说明：论文中的“13 轮、每轮 1193/100 张图的全覆盖交叉测试”属于完整评估协议，不是训练循环本身。当前代码支持显式训练/验证目录和随机划分，但还没有自动生成这 13 个非重叠 fold。
