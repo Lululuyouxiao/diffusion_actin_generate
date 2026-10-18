@@ -78,6 +78,30 @@ KEEP_ROLES_SPECIAL = [
     ("bestpt", "prediction_checkpoint_bestpt"),
     ("lastpt", "prediction_checkpoint_lastpt"),
 ]
+
+
+def _checkpoint_jobs(run_dir, grid, best_epoch=None, include_best=True):
+    """Return checkpoint files for the requested grid.
+
+    ``include_best=False`` is used for targeted evaluations where evaluating
+    the grid is the whole job.  In that mode ``best.pt`` is never appended,
+    even when its epoch is outside the requested grid.
+    """
+    run_dir = Path(run_dir)
+    jobs = []
+    seen = set()
+    for epoch in grid:
+        epoch = int(epoch)
+        path = run_dir / "checkpoints" / "epoch_{:04d}.pt".format(epoch)
+        if path.exists() and epoch not in seen:
+            jobs.append((epoch, path))
+            seen.add(epoch)
+    if include_best and best_epoch is not None:
+        best_epoch = int(best_epoch)
+        best_path = run_dir / "best.pt"
+        if best_path.exists() and best_epoch not in seen:
+            jobs.append((best_epoch, best_path))
+    return jobs
 MIN_COHERENT_PIXELS = 50
 
 
@@ -434,7 +458,7 @@ def plot_matrix_summary(runs_root, run_results):
 # per-run driver
 # --------------------------------------------------------------------------- #
 def process_run(run_dir, dataset_root, device, num_samples, grid, force,
-                amp=False, cond_batch=1, limit=0):
+                amp=False, cond_batch=1, limit=0, include_best=True):
     run_dir = Path(run_dir)
     run_name = run_dir.name
     metrics_path = run_dir / "metrics.csv"
@@ -442,32 +466,51 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
         print("[skip] {}: no metrics.csv".format(run_name), flush=True)
         return None
 
-    # reference checkpoint for config / best epoch
+    # Reference metadata comes from the requested grid in strict mode so that
+    # best.pt is neither loaded nor sampled.
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
-    if not best_path.exists():
+    if include_best and not best_path.exists():
         print("[skip] {}: no best.pt".format(run_name), flush=True)
         return None
-    model, config, best_epoch = load_checkpoint(best_path, device)
+    if include_best:
+        reference_path = best_path
+    else:
+        reference_path = run_dir / "checkpoints" / "epoch_{:04d}.pt".format(int(grid[0]))
+        if not reference_path.exists():
+            raise FileNotFoundError(
+                "Required grid checkpoint missing for {}: {}".format(
+                    run_name, reference_path.name
+                )
+            )
+    model, config, reference_epoch = load_checkpoint(reference_path, device)
+    best_epoch = reference_epoch
     del model
     torch.cuda.empty_cache() if device.type == "cuda" else None
-    print("== {} ==  (best.pt = epoch {}, T={}, S={})".format(
-        run_name, best_epoch, config.timesteps, config.ddim_steps), flush=True)
+    reference_label = "best.pt" if include_best else reference_path.name
+    print("== {} ==  (reference {} epoch {}, T={}, S={})".format(
+        run_name, reference_label, reference_epoch, config.timesteps, config.ddim_steps), flush=True)
 
     val_data = load_val_data(dataset_root, config)
     if limit and limit > 0:
         val_data = val_data[:int(limit)]
         print("  [limit] evaluating first {} validation pairs only".format(len(val_data)), flush=True)
 
-    # assemble checkpoint list: grid + best.pt
-    ckpt_jobs = []
-    for epoch in grid:
-        path = run_dir / "checkpoints" / "epoch_{:04d}.pt".format(epoch)
-        if path.exists():
-            ckpt_jobs.append((epoch, path))
-        else:
-            print("  [warn] missing checkpoint {}".format(path.name), flush=True)
-    ckpt_jobs.append((best_epoch, best_path))
+    ckpt_jobs = _checkpoint_jobs(
+        run_dir, grid, best_epoch=reference_epoch, include_best=include_best
+    )
+    if not include_best:
+        missing = [
+            run_dir / "checkpoints" / "epoch_{:04d}.pt".format(epoch)
+            for epoch in grid
+            if not (run_dir / "checkpoints" / "epoch_{:04d}.pt".format(epoch)).exists()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "Required grid checkpoint(s) missing for {}: {}".format(
+                    run_name, ", ".join(path.name for path in missing)
+                )
+            )
 
     rows, columns = read_metrics_csv(metrics_path)
     done_epochs = set()
@@ -496,6 +539,20 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
             torch.cuda.empty_cache()
         cache[epoch] = (prob_maps, sample0, ckpt_config.ddim_steps)
         merge_epoch_metrics(metrics_path, epoch, means)
+        if not include_best:
+            output_name = "prediction_epoch_{:04d}_samples{:03d}".format(
+                epoch, num_samples
+            )
+            save_keep_set(
+                run_dir,
+                output_name,
+                epoch,
+                prob_maps,
+                sample0,
+                val_data,
+                num_samples,
+                ckpt_config.ddim_steps,
+            )
         elapsed = time.time() - start
         print("  epoch {:4d}: ssim={:.4f} dice={:.4f} iou={:.4f} orient={:.4f} "
               "outside={:.4f}  ({:.1f}s)".format(
@@ -504,6 +561,13 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
 
     # recompute score_avg over all evaluated epochs
     fill_score_avg(metrics_path)
+
+    # Targeted grid jobs must stop here.  The normal keep-set stage can
+    # regenerate historical winner checkpoints (including best.pt), which is
+    # intentionally excluded from a strict grid-only evaluation.
+    if not include_best:
+        print("  grid-only evaluation complete; skipping best/keep-set sampling", flush=True)
+        return metrics_path
 
     # decide keep-sets from the merged table
     rows, columns = read_metrics_csv(metrics_path)
@@ -605,6 +669,8 @@ def main():
                         help="skip the cross-run summary plot (use on parallel workers)")
     parser.add_argument("--force", action="store_true",
                         help="re-evaluate epochs that already have scores")
+    parser.add_argument("--grid_only", action="store_true",
+                        help="evaluate only --grid checkpoints; never load or evaluate best.pt")
     parser.add_argument("--amp", action="store_true",
                         help="use automatic mixed precision for sampling (faster, screening only)")
     parser.add_argument("--cond_batch", type=int, default=1,
@@ -628,21 +694,33 @@ def main():
             continue
         if only_tokens and not any(token in child.name for token in only_tokens):
             continue
-        if not (child / "best.pt").exists():
+        if args.grid_only:
+            has_grid = all(
+                (child / "checkpoints" / "epoch_{:04d}.pt".format(epoch)).exists()
+                for epoch in grid
+            )
+            if not has_grid:
+                continue
+            if not (child / "metrics.csv").exists():
+                continue
+        elif not (child / "best.pt").exists():
             continue
         run_dirs.append(child)
     print("runs to evaluate: {}".format([d.name for d in run_dirs]), flush=True)
 
     run_results = []
+    failed_runs = []
     for run_dir in run_dirs:
         try:
             metrics_path = process_run(run_dir, args.dataset_root, device,
                                        args.num_samples, grid, args.force,
                                        amp=args.amp, cond_batch=args.cond_batch,
-                                       limit=args.limit)
+                                       limit=args.limit,
+                                       include_best=not args.grid_only)
             if metrics_path:
                 run_results.append((run_dir.name, metrics_path))
         except Exception:
+            failed_runs.append(run_dir.name)
             print("[error] run {} failed:".format(run_dir.name), flush=True)
             import traceback
             traceback.print_exc()
@@ -651,6 +729,9 @@ def main():
     if run_results and not args.no_summary:
         plot_matrix_summary(runs_root, run_results)
         print("summary plot saved to {}".format(runs_root / "evaluation_summary.png"), flush=True)
+    if failed_runs:
+        print("evaluation failed for run(s): {}".format(", ".join(failed_runs)), flush=True)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

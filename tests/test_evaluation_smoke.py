@@ -6,10 +6,21 @@ import numpy as np
 from PIL import Image
 
 from evaluate_diffusion import _normalize_model_state_dict, evaluate_checkpoint
+from evaluate_matrix import _checkpoint_jobs
 from train_diffusion import TrainingConfig, run_training
 
 
 class EvaluationSmokeTests(unittest.TestCase):
+    def test_checkpoint_grid_only_does_not_append_best_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            checkpoints = run_dir / "checkpoints"
+            checkpoints.mkdir()
+            for epoch in (1400, 1500):
+                (checkpoints / "epoch_{:04d}.pt".format(epoch)).touch()
+            jobs = _checkpoint_jobs(run_dir, [1500], best_epoch=1400, include_best=False)
+            self.assertEqual(jobs, [(1500, checkpoints / "epoch_1500.pt")])
+
     def test_data_parallel_state_dict_is_normalized_for_single_model(self):
         state = {
             "module.input_block.weight": np.array([1]),
