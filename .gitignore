@@ -5,6 +5,8 @@ validation/
 *.7z*
 
 # 模型权重和推理产物
+runs/
+run/
 *.pt
 *.pkl
 results*/
