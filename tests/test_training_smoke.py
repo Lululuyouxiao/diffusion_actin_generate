@@ -2,6 +2,7 @@ import csv
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -10,6 +11,31 @@ from train_diffusion import TrainingConfig, build_model, run_training
 
 
 class TrainingSmokeTests(unittest.TestCase):
+    def test_rng_states_are_moved_to_cpu_before_restore(self):
+        from train_diffusion import _restore_rng_state
+
+        class MappedState:
+            def __init__(self, cpu_state):
+                self.cpu_state = cpu_state
+
+            def cpu(self):
+                return self.cpu_state
+
+        cpu_state = object()
+        cuda_states = [object(), object()]
+        checkpoint = {
+            "rng_state": MappedState(cpu_state),
+            "cuda_rng_state": [MappedState(state) for state in cuda_states],
+        }
+
+        with mock.patch("train_diffusion.torch.set_rng_state") as set_cpu_rng, mock.patch(
+            "train_diffusion.torch.cuda.is_available", return_value=True
+        ), mock.patch("train_diffusion.torch.cuda.set_rng_state_all") as set_cuda_rng:
+            _restore_rng_state(checkpoint)
+
+        set_cpu_rng.assert_called_once_with(cpu_state)
+        set_cuda_rng.assert_called_once_with(cuda_states)
+
     def test_multi_gpu_configuration_parses_ids_without_enabling_cpu_parallel(self):
         config = TrainingConfig(device="cpu", gpu_ids="0,1", use_data_parallel=False)
         model = build_model(config)

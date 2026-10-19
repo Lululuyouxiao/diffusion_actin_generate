@@ -181,9 +181,11 @@ def _checkpoint_state(
 
 def _restore_rng_state(checkpoint):
     if "rng_state" in checkpoint:
-        torch.set_rng_state(checkpoint["rng_state"])
+        torch.set_rng_state(checkpoint["rng_state"].cpu())
     if torch.cuda.is_available() and "cuda_rng_state" in checkpoint:
-        torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
+        torch.cuda.set_rng_state_all(
+            [state.cpu() for state in checkpoint["cuda_rng_state"]]
+        )
 
 
 def _validate_resume_config(current, saved):
