@@ -32,6 +32,7 @@ Useful extras:
 """
 
 import argparse
+import shutil
 import csv
 import json
 import sys
@@ -457,14 +458,32 @@ def plot_matrix_summary(runs_root, run_results):
 # --------------------------------------------------------------------------- #
 # per-run driver
 # --------------------------------------------------------------------------- #
+def prepare_metrics_path(run_dir, metrics_filename):
+    run_dir = Path(run_dir)
+    source = run_dir / "metrics.csv"
+    if not source.exists():
+        raise FileNotFoundError("Missing training metrics: {}".format(source))
+    if metrics_filename == "metrics.csv":
+        return source
+    if (Path(metrics_filename).name != metrics_filename
+            or not metrics_filename.startswith("metrics_")
+            or not metrics_filename.endswith(".csv")):
+        raise ValueError("metrics_filename must be a metrics_*.csv basename")
+    target = run_dir / metrics_filename
+    if not target.exists():
+        shutil.copyfile(source, target)
+    return target
+
+
 def process_run(run_dir, dataset_root, device, num_samples, grid, force,
-                amp=False, cond_batch=1, limit=0, include_best=True):
+                amp=False, cond_batch=1, limit=0, include_best=True,
+                metrics_filename="metrics.csv"):
     run_dir = Path(run_dir)
     run_name = run_dir.name
-    metrics_path = run_dir / "metrics.csv"
-    if not metrics_path.exists():
+    if not (run_dir / "metrics.csv").exists():
         print("[skip] {}: no metrics.csv".format(run_name), flush=True)
         return None
+    metrics_path = prepare_metrics_path(run_dir, metrics_filename)
 
     # Reference metadata comes from the requested grid in strict mode so that
     # best.pt is neither loaded nor sampled.
@@ -665,6 +684,10 @@ def main():
                         help="comma-separated substrings of run names to skip")
     parser.add_argument("--only", default="",
                         help="comma-separated substrings; only matching run directories")
+    parser.add_argument("--exact_run", default="",
+                        help="evaluate exactly one run directory name")
+    parser.add_argument("--metrics_filename", default="metrics.csv",
+                        help="per-run metrics CSV filename (default: metrics.csv)")
     parser.add_argument("--no_summary", action="store_true",
                         help="skip the cross-run summary plot (use on parallel workers)")
     parser.add_argument("--force", action="store_true",
@@ -689,6 +712,8 @@ def main():
     for child in sorted(runs_root.iterdir()):
         if not child.is_dir():
             continue
+        if args.exact_run and child.name != args.exact_run:
+            continue
         if any(token in child.name for token in skip_tokens):
             print("[skip-by-name] {}".format(child.name), flush=True)
             continue
@@ -707,6 +732,8 @@ def main():
             continue
         run_dirs.append(child)
     print("runs to evaluate: {}".format([d.name for d in run_dirs]), flush=True)
+    if args.exact_run and len(run_dirs) != 1:
+        raise SystemExit("Requested run not found or missing checkpoint: {}".format(args.exact_run))
 
     run_results = []
     failed_runs = []
@@ -716,7 +743,8 @@ def main():
                                        args.num_samples, grid, args.force,
                                        amp=args.amp, cond_batch=args.cond_batch,
                                        limit=args.limit,
-                                       include_best=not args.grid_only)
+                                       include_best=not args.grid_only,
+                                       metrics_filename=args.metrics_filename)
             if metrics_path:
                 run_results.append((run_dir.name, metrics_path))
         except Exception:
