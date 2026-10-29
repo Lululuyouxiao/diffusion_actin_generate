@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Evaluate the epoch-2500 checkpoint on the validation split using two GPUs.
-# Each repeated-sample count gets its own metrics CSV and prediction directory:
-# prediction_epoch_2500_samples025/020/015/010/005.
+# Evaluate the epoch-2500 checkpoint on the full paired dataset using two GPUs.
+# The single evaluation uses num_samples=25 and DataParallel across both GPUs.
 set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 4 ]]; then
@@ -45,52 +44,39 @@ RUNS_ROOT="$(dirname "$RUN_DIR")"
 RUN_NAME="$(basename "$RUN_DIR")"
 cd "$PROJECT_DIR"
 
-echo "Evaluating $RUN_NAME at epoch 2500 on the validation split"
+echo "Evaluating $RUN_NAME at epoch 2500 on the full paired dataset"
 echo "Dataset: $DATASET_ROOT"
-echo "GPU $GPU0_ID: 25, 15 samples"
-echo "GPU $GPU1_ID: 20, 10, 5 samples"
-
-run_worker() {
-  local gpu_id="$1"
-  shift
-  local num_samples sample_tag
-  for num_samples in "$@"; do
-    printf -v sample_tag '%03d' "$num_samples"
-    echo "[GPU $gpu_id] num_samples=$num_samples"
-    CUDA_VISIBLE_DEVICES="$gpu_id" "$PYTHON_BIN" evaluate_matrix.py \
-      --runs_root "$RUNS_ROOT" \
-      --dataset_root "$DATASET_ROOT" \
-      --device cuda:0 \
-      --num_samples "$num_samples" \
-      --grid 2500 \
-      --exact_run "$RUN_NAME" \
-      --metrics_filename "metrics_epoch_2500_samples${sample_tag}.csv" \
-      --grid_only \
-      --force \
-      --amp \
-      --cond_batch 4 \
-      --no_summary
-  done
-}
+echo "DataParallel GPUs: $GPU0_ID,$GPU1_ID"
+echo "num_samples: 25"
 
 LOG_DIR="$RUN_DIR/eval_epoch2500_sample_sweep_logs"
 mkdir -p "$LOG_DIR"
-run_worker "$GPU0_ID" 25 15 > "$LOG_DIR/gpu${GPU0_ID}.log" 2>&1 &
-PID0=$!
-run_worker "$GPU1_ID" 20 10 5 > "$LOG_DIR/gpu${GPU1_ID}.log" 2>&1 &
-PID1=$!
-
-STATUS0=0
-STATUS1=0
-wait "$PID0" || STATUS0=$?
-wait "$PID1" || STATUS1=$?
-if (( STATUS0 != 0 || STATUS1 != 0 )); then
-  echo "Evaluation failed (GPU $GPU0_ID: $STATUS0, GPU $GPU1_ID: $STATUS1). Logs: $LOG_DIR" >&2
+if CUDA_VISIBLE_DEVICES="$GPU0_ID,$GPU1_ID" "$PYTHON_BIN" evaluate_matrix.py \
+  --runs_root "$RUNS_ROOT" \
+  --dataset_root "$DATASET_ROOT" \
+  --device cuda:0 \
+  --num_samples 25 \
+  --grid 2500 \
+  --exact_run "$RUN_NAME" \
+  --metrics_filename metrics_epoch_2500_samples025.csv \
+  --grid_only \
+  --all_data \
+  --use_data_parallel \
+  --gpu_ids 0,1 \
+  --force \
+  --amp \
+  --cond_batch 4 \
+  --no_summary \
+  > "$LOG_DIR/gpu${GPU0_ID}_${GPU1_ID}.log" 2>&1; then
+  STATUS=0
+else
+  STATUS=$?
+fi
+if (( STATUS != 0 )); then
+  echo "Evaluation failed (status $STATUS). Log: $LOG_DIR/gpu${GPU0_ID}_${GPU1_ID}.log" >&2
   exit 1
 fi
 
 echo "All evaluations completed. Outputs:"
-for num_samples in 25 20 15 10 5; do
-  printf '  %s/prediction_epoch_2500_samples%03d\n' "$RUN_DIR" "$num_samples"
-done
+printf '  %s/prediction_epoch_2500_samples025\n' "$RUN_DIR"
 echo "Logs: $LOG_DIR"

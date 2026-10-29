@@ -58,7 +58,7 @@ from datasets import (
 )
 from diffusion_core import DiffusionProcess
 from train_diffusion import _load_checkpoint, build_model, resolve_device
-from training_config import TrainingConfig
+from training_config import TrainingConfig, parse_gpu_ids
 
 METRIC_COLUMNS = [
     "ssim",
@@ -186,15 +186,15 @@ def compute_metrics(prob, condition_np, gt_gray, gt_bin):
 # --------------------------------------------------------------------------- #
 # data / checkpoint helpers
 # --------------------------------------------------------------------------- #
-def load_val_data(dataset_root, config):
+def load_eval_data(dataset_root, config, all_data=False):
     condition_dir, target_dir = discover_split_directories(dataset_root, "train")
     pairs = pair_image_files(condition_dir, target_dir)
-    _, val_pairs = split_pairs(pairs, config.val_fraction, config.seed)
-    val_data = []
-    for pair in val_pairs:
+    eval_pairs = pairs if all_data else split_pairs(pairs, config.val_fraction, config.seed)[1]
+    eval_data = []
+    for pair in eval_pairs:
         condition = _to_tensor(Image.open(pair.condition), config.resolution).numpy()
         target = _to_tensor(Image.open(pair.target), config.resolution).numpy()
-        val_data.append(
+        eval_data.append(
             {
                 "name": Path(pair.condition).name,
                 "condition": condition[0],          # [H, W] in [-1, 1]
@@ -202,8 +202,14 @@ def load_val_data(dataset_root, config):
                 "gt_bin": (target[0] > 0.0),        # fiber = bright
             }
         )
-    print("  validation pairs: {}".format(len(val_data)), flush=True)
-    return val_data
+    label = "all dataset" if all_data else "validation"
+    print("  {} pairs: {}".format(label, len(eval_data)), flush=True)
+    return eval_data
+
+
+def load_val_data(dataset_root, config):
+    """Backward-compatible validation-only data loader."""
+    return load_eval_data(dataset_root, config, all_data=False)
 
 
 def _strip_module(state_dict):
@@ -212,11 +218,27 @@ def _strip_module(state_dict):
     return state_dict
 
 
-def load_checkpoint(path, device):
+def maybe_wrap_data_parallel(model, device, gpu_ids):
+    """Wrap the evaluation model across the requested CUDA devices."""
+    if device.type != "cuda" or not torch.cuda.is_available():
+        raise RuntimeError("Evaluation DataParallel requires CUDA")
+    available = torch.cuda.device_count()
+    if not gpu_ids or max(gpu_ids) >= available:
+        raise RuntimeError(
+            "Requested gpu_ids {} but only {} CUDA device(s) are available".format(
+                gpu_ids, available
+            )
+        )
+    return torch.nn.DataParallel(model, device_ids=list(gpu_ids))
+
+
+def load_checkpoint(path, device, use_data_parallel=False, gpu_ids=(0, 1)):
     state = _load_checkpoint(str(path), device)
     config = TrainingConfig.from_dict(state["config"])
     model = build_model(config).to(device)
     model.load_state_dict(_strip_module(state["model"]))
+    if use_data_parallel:
+        model = maybe_wrap_data_parallel(model, device, gpu_ids)
     model.eval()
     epoch = int(state.get("epoch", 0))
     return model, config, epoch
@@ -477,7 +499,8 @@ def prepare_metrics_path(run_dir, metrics_filename):
 
 def process_run(run_dir, dataset_root, device, num_samples, grid, force,
                 amp=False, cond_batch=1, limit=0, include_best=True,
-                metrics_filename="metrics.csv"):
+                metrics_filename="metrics.csv", all_data=False,
+                use_data_parallel=False, gpu_ids=(0, 1)):
     run_dir = Path(run_dir)
     run_name = run_dir.name
     if not (run_dir / "metrics.csv").exists():
@@ -502,7 +525,9 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
                     run_name, reference_path.name
                 )
             )
-    model, config, reference_epoch = load_checkpoint(reference_path, device)
+    model, config, reference_epoch = load_checkpoint(
+        reference_path, device, use_data_parallel=use_data_parallel, gpu_ids=gpu_ids
+    )
     best_epoch = reference_epoch
     del model
     torch.cuda.empty_cache() if device.type == "cuda" else None
@@ -510,10 +535,10 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
     print("== {} ==  (reference {} epoch {}, T={}, S={})".format(
         run_name, reference_label, reference_epoch, config.timesteps, config.ddim_steps), flush=True)
 
-    val_data = load_val_data(dataset_root, config)
+    val_data = load_eval_data(dataset_root, config, all_data=all_data)
     if limit and limit > 0:
         val_data = val_data[:int(limit)]
-        print("  [limit] evaluating first {} validation pairs only".format(len(val_data)), flush=True)
+        print("  [limit] evaluating first {} pairs only".format(len(val_data)), flush=True)
 
     ckpt_jobs = _checkpoint_jobs(
         run_dir, grid, best_epoch=reference_epoch, include_best=include_best
@@ -547,7 +572,9 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
             print("  epoch {:4d}: already evaluated, skip".format(epoch), flush=True)
             continue
         start = time.time()
-        model, ckpt_config, ckpt_epoch = load_checkpoint(path, device)
+        model, ckpt_config, ckpt_epoch = load_checkpoint(
+            path, device, use_data_parallel=use_data_parallel, gpu_ids=gpu_ids
+        )
         assert ckpt_epoch == epoch, "epoch mismatch for {}: {} vs {}".format(path, ckpt_epoch, epoch)
         prob_maps, sample0, means = evaluate_checkpoint(
             model, ckpt_config, val_data, num_samples, device, config.seed,
@@ -616,7 +643,9 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
 
     last_epoch = None
     if last_path.exists():
-        _, _, last_epoch = load_checkpoint(last_path, device)
+        _, _, last_epoch = load_checkpoint(
+            last_path, device, use_data_parallel=use_data_parallel, gpu_ids=gpu_ids
+        )
     else:
         last_epoch = max(ep for ep, _ in evaluated)
 
@@ -645,7 +674,9 @@ def process_run(run_dir, dataset_root, device, num_samples, grid, force,
                 keep_summary["roles"][role] = {"epoch": epoch, "folder": None,
                                                "note": "checkpoint missing"}
                 continue
-            model, ckpt_config, _ = load_checkpoint(path, device)
+            model, ckpt_config, _ = load_checkpoint(
+                path, device, use_data_parallel=use_data_parallel, gpu_ids=gpu_ids
+            )
             prob_maps, sample0, ddim_steps = evaluate_checkpoint(
                 model, ckpt_config, val_data, num_samples, device, config.seed,
                 amp=amp, cond_batch=cond_batch,
@@ -699,7 +730,13 @@ def main():
     parser.add_argument("--cond_batch", type=int, default=1,
                         help="how many conditions to pack into one sampling batch")
     parser.add_argument("--limit", type=int, default=0,
-                        help="evaluate only the first N validation pairs (0 = all)")
+                        help="evaluate only the first N selected pairs (0 = all)")
+    parser.add_argument("--all_data", action="store_true",
+                        help="evaluate every paired image instead of the deterministic validation split")
+    parser.add_argument("--use_data_parallel", action="store_true",
+                        help="replicate the evaluation model across --gpu_ids")
+    parser.add_argument("--gpu_ids", type=parse_gpu_ids, default=(0, 1),
+                        help="comma-separated CUDA device IDs for DataParallel")
     args = parser.parse_args()
 
     device = resolve_device(args.device)
@@ -744,7 +781,10 @@ def main():
                                        amp=args.amp, cond_batch=args.cond_batch,
                                        limit=args.limit,
                                        include_best=not args.grid_only,
-                                       metrics_filename=args.metrics_filename)
+                                       metrics_filename=args.metrics_filename,
+                                       all_data=args.all_data,
+                                       use_data_parallel=args.use_data_parallel,
+                                       gpu_ids=args.gpu_ids)
             if metrics_path:
                 run_results.append((run_dir.name, metrics_path))
         except Exception:
